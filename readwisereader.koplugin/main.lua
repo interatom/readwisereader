@@ -1152,6 +1152,7 @@ function ReadwiseReader:getDocumentList()
                 
                 if not result then
                     logger.err("ReadwiseReader:getDocumentList: error getting document list for location", location, ":", err)
+                    self:hideProgress()
                     return nil
                 end
                 
@@ -1185,6 +1186,7 @@ function ReadwiseReader:getDocumentList()
     end
     
     logger.dbg("ReadwiseReader:getDocumentList: total documents retrieved:", #documents)
+    self:hideProgress()
     return documents
 end
 
@@ -1252,6 +1254,7 @@ function ReadwiseReader:cleanupArchivedDocuments()
     
     if not archived_docs then
         logger.err("ReadwiseReader:cleanupArchivedDocuments: failed to get archived documents")
+        self:hideProgress()
         return 0
     end
     
@@ -1270,6 +1273,7 @@ function ReadwiseReader:cleanupArchivedDocuments()
     end
     
     logger.dbg("ReadwiseReader:cleanupArchivedDocuments: deleted", deleted_count, "locally archived documents")
+    self:hideProgress()
     return deleted_count
 end
 
@@ -1329,24 +1333,26 @@ function ReadwiseReader:downloadDocument(document)
     local filepath = self.directory .. filename
     
     local processed_content = self:processHtmlContent(content, document)
-    
+
+    local result = "failed"
     local file, err = io.open(filepath, "w")
     if not file then
         logger.err("ReadwiseReader:downloadDocument: failed to open file for writing:", err)
-        return "failed"
-    end
-    
-    local success = file:write(processed_content)
-    file:close()
-    
-    if success then
-        logger.dbg("ReadwiseReader:downloadDocument: saved", document.id, "to", filepath)
-        return "downloaded"
     else
-        logger.err("ReadwiseReader:downloadDocument: failed to write file")
-        os.remove(filepath)
-        return "failed"
+        local success = file:write(processed_content)
+        file:close()
+
+        if success then
+            logger.dbg("ReadwiseReader:downloadDocument: saved", document.id, "to", filepath)
+            result = "downloaded"
+        else
+            logger.err("ReadwiseReader:downloadDocument: failed to write file")
+            os.remove(filepath)
+        end
     end
+
+    self:hideProgress()
+    return result
 end
 
 function ReadwiseReader:processHtmlContent(content, document)
