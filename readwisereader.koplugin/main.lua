@@ -918,15 +918,41 @@ function ReadwiseReader:updateDocumentCategories(documents)
     end
 end
 
+function ReadwiseReader:hasMetadataChangedCompare(doc_id, old_tags_map, old_locations_map)
+    local old_tags = old_tags_map[doc_id] or {}
+    local new_tags = self.document_tags[doc_id] or {}
+
+    if #old_tags ~= #new_tags then
+        return true
+    end
+
+    local new_tag_set = {}
+    for _, tag in ipairs(new_tags) do
+        new_tag_set[tag] = true
+    end
+
+    for _, tag in ipairs(old_tags) do
+        if not new_tag_set[tag] then
+            return true
+        end
+    end
+
+    return old_locations_map[doc_id] ~= self.document_locations[doc_id]
+end
+
 function ReadwiseReader:updateAvailableTags(documents)
     local new_tags = {}
     local tag_set = {}
     local new_locations = {}
     local location_set = {}
-    
+
+    local updated_count = 0
+    local old_document_tags = self.document_tags or {}
+    local old_document_locations = self.document_locations or {}
+
     self.document_tags = {}
     self.document_locations = {}
-    
+
     logger.dbg("ReadwiseReader:updateAvailableTags: processing", #documents, "documents")
     
     self:updateDocumentCategories(documents)
@@ -980,6 +1006,20 @@ function ReadwiseReader:updateAvailableTags(documents)
         end
         
         logger.dbg("ReadwiseReader:updateAvailableTags: document", doc.id, "has", #self.document_tags[doc.id], "tags:", table.concat(self.document_tags[doc.id], ", "))
+
+        local filepath = self:findLocalDocumentByReadwiseId(doc.id)
+        if filepath then
+            if self:hasMetadataChangedCompare(doc.id, old_document_tags, old_document_locations) then
+                logger.dbg("ReadwiseReader:updateAvailableTags: metadata changed for", doc.id, "- updating")
+                local status, err = pcall(function() self:setDocumentMetadata(filepath, doc) end)
+                if status then
+                    self:updateDocumentCollections(filepath, doc)
+                    updated_count = updated_count + 1
+                else
+                    logger.warn("ReadwiseReader:updateAvailableTags: metadata update failed for", doc.id, ":", err)
+                end
+            end
+        end
     end
     
     table.sort(new_tags, function(a, b)
@@ -1010,6 +1050,8 @@ function ReadwiseReader:updateAvailableTags(documents)
     if #self.available_locations > 0 then
         logger.dbg("ReadwiseReader:updateAvailableTags: locations found:", table.concat(self.available_locations, ", "))
     end
+
+    return updated_count
 end
 
 function ReadwiseReader:shouldSkipDocument(document)
@@ -2007,7 +2049,7 @@ function ReadwiseReader:synchronize()
         return
     end
     
-    self:updateAvailableTags(documents)
+    local updated_count = self:updateAvailableTags(documents)
 
     local filtered_documents = {}
     local existing_count = 0
@@ -2020,7 +2062,7 @@ function ReadwiseReader:synchronize()
         end
     end
 
-    if #filtered_documents == 0 and cleaned_count == 0 and archived_count == 0 and highlights_exported == 0 then
+    if #filtered_documents == 0 and cleaned_count == 0 and archived_count == 0 and highlights_exported == 0 and updated_count == 0 then
         local msg = "No new articles found and no changes to process."
         if existing_count > 0 then
             msg = msg .. "\n" .. string.format("Skipped %d existing articles.", existing_count)
@@ -2068,7 +2110,11 @@ function ReadwiseReader:synchronize()
     if downloaded > 0 then
         msg = msg .. "\n" .. string.format("Downloaded: %d", downloaded)
     end
-    
+
+    if updated_count > 0 then
+        msg = msg .. "\n" .. string.format("Updated metadata: %d", updated_count)
+    end
+
     if existing_count > 0 then
         msg = msg .. "\n" .. string.format("Skipped (already exists): %d", existing_count)
     end
@@ -2090,7 +2136,7 @@ function ReadwiseReader:synchronize()
         msg = msg .. "\n" .. string.format("Deleted locally: %d", deleted_count)
     end
     
-    if downloaded == 0 and skipped == 0 and failed == 0 and cleaned_count == 0 and archived_count == 0 and excluded_count == 0 and existing_count == 0 and highlights_exported == 0 then
+    if downloaded == 0 and skipped == 0 and failed == 0 and cleaned_count == 0 and archived_count == 0 and excluded_count == 0 and existing_count == 0 and highlights_exported == 0 and updated_count == 0 then
         msg = msg .. "\n" .. "No changes to process."
     end
     
