@@ -1367,6 +1367,10 @@ function ReadwiseReader:processHtmlContent(content, document)
     local max_article_size = self.max_image_size_mb * 1024 * 1024
     local images_stopped = false
     
+    if total_article_size >= max_article_size then
+        images_stopped = true
+    end
+
     local html = string.format([[
 <!DOCTYPE html>
 <html>
@@ -1680,6 +1684,11 @@ function ReadwiseReader:fetchAndEncodeImageWithSize(url, max_article_size, curre
         return nil, 0
     end
     
+    if current_article_size >= max_article_size then
+        logger.dbg("ReadwiseReader:fetchAndEncodeImageWithSize: size limit already reached, skipping download of", url)
+        return nil, 0
+    end
+
     -- Handle data: URLs - they're already encoded, just return them as-is
     if url:match("^data:") then
         logger.dbg("ReadwiseReader:fetchAndEncodeImageWithSize: data URL detected, returning as-is")
