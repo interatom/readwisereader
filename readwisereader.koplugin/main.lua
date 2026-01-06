@@ -946,7 +946,6 @@ function ReadwiseReader:updateAvailableTags(documents)
     local new_locations = {}
     local location_set = {}
 
-    local updated_count = 0
     local old_document_tags = self.document_tags or {}
     local old_document_locations = self.document_locations or {}
 
@@ -1006,20 +1005,6 @@ function ReadwiseReader:updateAvailableTags(documents)
         end
         
         logger.dbg("ReadwiseReader:updateAvailableTags: document", doc.id, "has", #self.document_tags[doc.id], "tags:", table.concat(self.document_tags[doc.id], ", "))
-
-        local filepath = self:findLocalDocumentByReadwiseId(doc.id)
-        if filepath then
-            if self:hasMetadataChangedCompare(doc.id, old_document_tags, old_document_locations) then
-                logger.dbg("ReadwiseReader:updateAvailableTags: metadata changed for", doc.id, "- updating")
-                local status, err = pcall(function() self:setDocumentMetadata(filepath, doc) end)
-                if status then
-                    self:updateDocumentCollections(filepath, doc)
-                    updated_count = updated_count + 1
-                else
-                    logger.warn("ReadwiseReader:updateAvailableTags: metadata update failed for", doc.id, ":", err)
-                end
-            end
-        end
     end
     
     table.sort(new_tags, function(a, b)
@@ -1049,6 +1034,32 @@ function ReadwiseReader:updateAvailableTags(documents)
     end
     if #self.available_locations > 0 then
         logger.dbg("ReadwiseReader:updateAvailableTags: locations found:", table.concat(self.available_locations, ", "))
+    end
+end
+
+function ReadwiseReader:updateExistingMetadata(documents, old_tags_map, old_locations_map)
+    local updated_count = 0
+    
+    -- Performance: Pre-map local documents to avoid nested filesystem traversals
+    local local_docs = {}
+    self:forEachLocalDocument(function(doc_id, filepath)
+        local_docs[doc_id] = filepath
+    end)
+
+    for _, doc in ipairs(documents) do
+        local filepath = local_docs[doc.id]
+        if filepath then
+            if self:hasMetadataChangedCompare(doc.id, old_tags_map, old_locations_map) then
+                logger.dbg("ReadwiseReader:updateExistingMetadata: metadata changed for", doc.id, "- updating")
+                local status, err = pcall(function() self:setDocumentMetadata(filepath, doc) end)
+                if status then
+                    self:updateDocumentCollections(filepath, doc)
+                    updated_count = updated_count + 1
+                else
+                    logger.warn("ReadwiseReader:updateExistingMetadata: update failed for", doc.id, ":", err)
+                end
+            end
+        end
     end
 
     return updated_count
@@ -2049,7 +2060,15 @@ function ReadwiseReader:synchronize()
         return
     end
     
-    local updated_count = self:updateAvailableTags(documents)
+    -- Capture current state before updating maps
+    local old_document_tags = self.document_tags or {}
+    local old_document_locations = self.document_locations or {}
+
+    self:updateAvailableTags(documents)
+
+    -- Initialize tracking before potential updates
+    self:initCollectionTracking()
+    local updated_count = self:updateExistingMetadata(documents, old_document_tags, old_document_locations)
 
     local filtered_documents = {}
     local existing_count = 0
@@ -2069,6 +2088,7 @@ function ReadwiseReader:synchronize()
         end
         UIManager:show(InfoMessage:new{ text = msg })
         
+        self:saveCollections()
         self.last_sync_time = sync_start_time
         self:saveSettings()
         return
@@ -2077,8 +2097,6 @@ function ReadwiseReader:synchronize()
     local downloaded = 0
     local skipped = 0
     local failed = 0
-
-    self:initCollectionTracking()
 
     for i, document in ipairs(filtered_documents) do
         self:showProgress(string.format("Downloading %d of %d…", i, #filtered_documents))
